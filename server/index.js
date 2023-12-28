@@ -4,9 +4,32 @@ const bodyParser = require("body-parser");
 const cors = require("cors"); // Import cors module
 const bcrypt = require("bcrypt");
 const saltRounds = 10;
+const multer = require("multer");
+const path = require("path");
+const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Setup storage for multer
+
+const uploadDir = 'C:/Users/joneb/mydishbend/uploads'; // Replace with your actual directory path
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir); // Use the uploadDir variable for the destination folder
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, Date.now() + ext);
+  },
+});
+
+const upload = multer({ storage });
 
 // MySQL database connection
 const db = mysql.createConnection({
@@ -101,8 +124,7 @@ app.post("/api/update-profile", async (req, res) => {
   );
 });
 
-// API endpoint to retrieve all products
-// API endpoint to retrieve all products
+// API endpoint for product list
 app.get("/api/products", (req, res) => {
   const query = "SELECT * FROM products";
 
@@ -114,6 +136,212 @@ app.get("/api/products", (req, res) => {
 
     res.json({ products: results }); // Wrap the results in an object for consistency
   });
+});
+
+// API endpoint for product details
+app.get("/api/products/:id", (req, res) => {
+  const productId = req.params.id;
+  const query = "SELECT * FROM products WHERE id = ?";
+
+  db.query(query, [productId], (err, results) => {
+    if (err) {
+      console.error("Error executing query:", err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    res.json({ product: results[0] }); // Wrap the result in an object for consistency
+  });
+});
+// Function to generate a random order number
+const generateRandomOrderNumber = () => {
+  return Math.floor(100000 + Math.random() * 900000); // Generates a 6-digit random number
+};
+
+app.post("/api/products", upload.single("product_image"), (req, res) => {
+  const {
+    product_name,
+    product_description,
+    product_price,
+    short_description,
+    discount_price,
+    product_ingredients,
+  } = req.body;
+
+  const product_image = req.file ? req.file.filename : null; // Get the filename of the uploaded image
+
+  // Validate input data (add more validation as needed)
+  if (!product_name || !product_price) {
+    return res
+      .status(400)
+      .json({ error: "Product name and price are required." });
+  }
+
+  // Insert the new product into the database
+  const query =
+    "INSERT INTO products (product_name, product_description, product_price, short_description, discount_price, product_image, product_ingredients) VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+  db.query(
+    query,
+    [
+      product_name,
+      product_description,
+      product_price,
+      short_description,
+      discount_price,
+      product_image,
+      product_ingredients,
+    ],
+    (err, results) => {
+      if (err) {
+        console.error("Error executing query:", err);
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error", details: err.message });
+      }
+
+      // Fetch the newly added product
+      const fetchQuery = "SELECT * FROM products WHERE id = ?";
+
+      db.query(fetchQuery, [results.insertId], (fetchErr, fetchResults) => {
+        if (fetchErr) {
+          console.error("Error fetching newly added product:", fetchErr);
+          return res
+            .status(500)
+            .json({
+              error: "Internal Server Error",
+              details: fetchErr.message,
+            });
+        }
+
+        res.json({ product: fetchResults[0] }); // Wrap the result in an object for consistency
+      });
+    }
+  );
+});
+
+// API endpoint for saving payment details
+// Update the existing payment detail API endpoint
+app.post("/api/paymentdetail", async (req, res) => {
+  const {
+    firstName,
+    lastName,
+    address,
+    postalCode,
+    email,
+    mobile,
+    paymentMethod,
+    price,
+    cardName,
+    cardNumber,
+    expireDate,
+    cvv,
+  } = req.body;
+
+  const orderNumber = generateRandomOrderNumber(); // Generate a random order number
+
+  // Insert payment details into the database
+  db.query(
+    "INSERT INTO payment_detail (order_number, payment_firstname, payment_lastname, payment_address, payment_postalcode, payment_email, payment_phonenumber, payment_cardname, payment_cardnumber, payment_expiredate, payment_cvv) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      orderNumber, // Use the dynamically generated order number
+      firstName,
+      lastName,
+      address,
+      postalCode,
+      email,
+      mobile,
+      cardName,
+      cardNumber,
+      expireDate,
+      cvv,
+    ],
+    (err, results) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal Server Error" });
+      }
+      res.json({
+        message: "Payment details saved successfully",
+        paymentId: results.insertId,
+        orderNumber,
+      });
+    }
+  );
+});
+// API endpoint for fetching order details by order number
+app.get("/api/orderdetails/:orderNumber", async (req, res) => {
+  const orderNumber = req.params.orderNumber;
+
+  // Query the database to retrieve order details using the order number
+  db.query(
+    "SELECT * FROM payment_detail WHERE order_number = ?",
+    [orderNumber],
+    (err, results) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal Server Error" });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      const orderDetails = results[0];
+      res.json(orderDetails);
+    }
+  );
+});
+app.get("/api/companydetails", (req, res) => {
+  const query = "SELECT * FROM company_info";
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error("Error executing query:", err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+
+    res.json({ companyInfo: results[0] }); // Assuming you expect one result
+  });
+});
+
+app.post("/api/loginadmin", async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Retrieve user from the database based on the provided email
+    db.query(
+      "SELECT * FROM admin_user WHERE email = ?",
+      [email],
+      async (err, results) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ error: "Internal Server Error" });
+        }
+
+        // Check if the user exists
+        if (results.length === 0) {
+          return res.status(401).json({ error: "Invalid email or password" });
+        }
+
+        // Compare the hashed password
+        const hashedPassword = results[0].password;
+        if (password === hashedPassword) {
+          // Passwords match, login successful
+          res.json({ message: "Login successful", user: results[0] });
+        } else {
+          // Passwords do not match
+          res.status(401).json({ error: "Invalid email or password" });
+        }
+      }
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 // Get all users endpoint
